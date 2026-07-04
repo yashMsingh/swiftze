@@ -1,13 +1,32 @@
 // src/components/modals/VehicleInfoModal.jsx
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X, UploadCloud } from 'lucide-react';
 
-function UploadZone() {
+function UploadZone({ onFilesSelected, uploading }) {
+  const inputRef = useRef(null);
+
   return (
     <div className="w-full min-h-[104px] bg-[#F4F4F5] rounded-[13px] flex flex-col items-center justify-center gap-[10px] px-4">
-      <button className="flex items-center gap-2 bg-white rounded-full px-[16px] py-[5px] text-[18px] font-medium text-[#111827] shadow-sm border border-[#E5E7EB] leading-tight">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          const files = Array.from(event.target.files || []);
+          if (files.length) onFilesSelected(files);
+          event.target.value = '';
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={uploading}
+        className="flex items-center gap-2 bg-white rounded-full px-[16px] py-[5px] text-[18px] font-medium text-[#111827] shadow-sm border border-[#E5E7EB] leading-tight disabled:opacity-60"
+      >
         <UploadCloud size={18} className="text-[#6B7280]" />
-        Upload
+        {uploading ? 'Uploading' : 'Upload'}
       </button>
       <p className="text-[17px] font-medium text-[#111827] leading-tight">Drop Your Files Here Or Browse</p>
       <p className="text-[15px] text-[#9CA3AF] leading-tight">Max file size is 20MB</p>
@@ -25,12 +44,25 @@ function ThumbnailRow({ count }) {
   );
 }
 
-export default function VehicleInfoModal({ onClose, onSave }) {
+export default function VehicleInfoModal({ vehicleId, onClose, onSave, onUploadVehicleImages }) {
+  const [uploading, setUploading] = useState(false);
+
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
+
+  const handleFilesSelected = async (files) => {
+    if (!onUploadVehicleImages) return;
+
+    setUploading(true);
+    try {
+      await onUploadVehicleImages(vehicleId, files);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   return (
     <div
@@ -53,7 +85,7 @@ export default function VehicleInfoModal({ onClose, onSave }) {
         <h2 className="text-[26px] font-bold text-[#111827] leading-tight mb-[18px] pr-20">Vehicle Information</h2>
 
         {/* Car upload zone */}
-        <UploadZone />
+        <UploadZone onFilesSelected={handleFilesSelected} uploading={uploading} />
 
         {/* 4 car thumbnails */}
         <div className="mt-[14px] mb-[24px]">
@@ -64,7 +96,7 @@ export default function VehicleInfoModal({ onClose, onSave }) {
         <h3 className="text-[24px] font-bold text-[#111827] leading-tight mb-[14px]">Driving License</h3>
 
         {/* License upload zone */}
-        <UploadZone />
+        <UploadZone onFilesSelected={handleFilesSelected} uploading={uploading} />
 
         {/* 2 license thumbnails */}
         <div className="mt-[14px] mb-[24px]">

@@ -1,5 +1,5 @@
 // src/pages/SettingsPage.jsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import AccordionSection from '../components/settings/AccordionSection';
 import ToggleRow from '../components/settings/ToggleRow';
 import StaticStatusRow from '../components/settings/StaticStatusRow';
@@ -16,6 +16,24 @@ import DeleteConfirmModal from '../components/modals/DeleteConfirmModal';
 import LegalContentModal from '../components/modals/LegalContentModal';
 
 import { userProfile, defaultNotifications } from '../data/mockSettings';
+import { getEmailPreferences, updateEmailPreferences } from '../api/swiftzeApi';
+
+const notificationPreferenceMap = {
+  orderRequests: 'new_orders',
+  earningAlerts: 'payment_notifications',
+  emailUpdates: 'order_updates',
+};
+
+function mapPreferencesToNotifications(preferences) {
+  if (!preferences || typeof preferences !== 'object') return defaultNotifications;
+
+  return {
+    push: defaultNotifications.push,
+    orderRequests: preferences.new_orders ?? defaultNotifications.orderRequests,
+    earningAlerts: preferences.payment_notifications ?? defaultNotifications.earningAlerts,
+    emailUpdates: preferences.order_updates ?? defaultNotifications.emailUpdates,
+  };
+}
 
 export default function SettingsPage() {
   // Accordion state
@@ -32,9 +50,49 @@ export default function SettingsPage() {
 
   // Toggles state
   const [notifications, setNotifications] = useState(defaultNotifications);
+  const [emailPreferences, setEmailPreferences] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEmailPreferences() {
+      try {
+        const preferences = await getEmailPreferences();
+        if (cancelled) return;
+
+        setEmailPreferences(preferences);
+        setNotifications(mapPreferencesToNotifications(preferences));
+      } catch (error) {
+        console.info('Using local notification fallback:', error.message);
+      }
+    }
+
+    loadEmailPreferences();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   
   const handleToggle = (key) => {
-    setNotifications(prev => ({ ...prev, [key]: !prev[key] }));
+    setNotifications(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      const preferenceKey = notificationPreferenceMap[key];
+
+      if (preferenceKey) {
+        const nextPreferences = {
+          ...(emailPreferences || {}),
+          [preferenceKey]: next[key],
+        };
+
+        setEmailPreferences(nextPreferences);
+        updateEmailPreferences(nextPreferences).catch((error) => {
+          console.info('Notification preference kept locally:', error.message);
+        });
+      }
+
+      return next;
+    });
   };
 
   // Lock App state
