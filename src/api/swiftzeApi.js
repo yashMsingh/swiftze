@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_SWIFTZE_API_BASE_URL || 'https://api.swiftze.com/api';
+const API_BASE_URL = import.meta.env.VITE_SWIFTZE_API_BASE_URL || 'http://localhost:8000/api';
+const isLocalApi = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/api/i.test(API_BASE_URL);
 
 const TOKEN_KEYS = [
   'swiftze_access_token',
@@ -29,7 +30,7 @@ function unwrapResponse(response) {
 async function request(path, options = {}) {
   const token = getAuthToken();
 
-  if (options.auth !== false && !token) {
+  if (options.auth !== false && !token && !isLocalApi) {
     throw new Error('Swiftze auth token is missing');
   }
 
