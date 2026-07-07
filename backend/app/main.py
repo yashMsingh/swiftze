@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -101,6 +101,11 @@ ratings = [
 ]
 
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
 class ProfileUpdate(BaseModel):
     full_name: str | None = None
     location: str | None = None
@@ -116,6 +121,30 @@ class EmailPreferencesUpdate(BaseModel):
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Auth — Login
+# ---------------------------------------------------------------------------
+# Accepted credentials match the seeded user in profile_state.
+# In a real deployment this would verify a hashed password from a database.
+VALID_CREDENTIALS: dict[str, str] = {
+    "catherineojong002@gmail.com": "swiftze123",
+}
+
+
+@app.post("/api/auth/login")
+def login(payload: LoginRequest) -> dict[str, Any]:
+    stored_password = VALID_CREDENTIALS.get(payload.email.lower().strip())
+    if stored_password is None or stored_password != payload.password:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    user = profile_state["user"]
+    return {
+        "access_token": f"local-token-{user['id']}",
+        "token_type": "bearer",
+        "user": user,
+    }
 
 
 @app.get("/api/auth/me")

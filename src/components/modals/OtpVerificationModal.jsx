@@ -29,6 +29,21 @@ export default function OtpVerificationModal({
     }
   };
 
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const pastedData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (pastedData) {
+      const newOtp = [...otp];
+      for (let i = 0; i < pastedData.length; i++) {
+        newOtp[i] = pastedData[i];
+      }
+      setOtp(newOtp);
+      // Focus the next empty input or the last input
+      const nextIndex = Math.min(pastedData.length, 5);
+      inputRefs.current[nextIndex]?.focus();
+    }
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (otp.every(digit => digit !== '')) {
@@ -62,6 +77,7 @@ export default function OtpVerificationModal({
                   value={digit}
                   onChange={(e) => handleChange(index, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(index, e)}
+                  onPaste={handlePaste}
                   className="w-12 h-12 text-center text-lg font-bold text-text-primary bg-bg-white border border-border-default focus:border-brand-red rounded-lg outline-none transition-colors"
                 />
               ))}

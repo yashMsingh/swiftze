@@ -10,12 +10,10 @@ const TOKEN_KEYS = [
 
 function getAuthToken() {
   if (typeof window === 'undefined') return null;
-
   for (const key of TOKEN_KEYS) {
     const value = window.localStorage.getItem(key);
     if (value) return value.replace(/^Bearer\s+/i, '');
   }
-
   return null;
 }
 
@@ -23,7 +21,6 @@ function unwrapResponse(response) {
   if (response && typeof response === 'object' && 'data' in response) {
     return response.data;
   }
-
   return response;
 }
 
@@ -59,17 +56,19 @@ async function request(path, options = {}) {
   return unwrapResponse(payload);
 }
 
-function firstValue(...values) {
-  return values.find((value) => value !== undefined && value !== null && value !== '');
+function firstDefined(...values) {
+  return values.find((v) => v !== undefined && v !== null && v !== '');
 }
 
 function initialsFromName(name = '') {
-  return name
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('') || 'U';
+  return (
+    name
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'U'
+  );
 }
 
 function splitPhone(phone = '') {
@@ -80,63 +79,99 @@ function splitPhone(phone = '') {
   };
 }
 
-function normalizeVehicle(vehicle = {}, driverProfile = {}) {
-  const details = driverProfile.vehicle_details || {};
-  const make = firstValue(vehicle.make, details.make, details.brand);
-  const model = firstValue(vehicle.model, details.model);
-  const year = firstValue(vehicle.year, details.year);
+function normalizeVehicle(vehicle = {}, driverVehicleDetails = {}) {
+  const make = firstDefined(vehicle.make, driverVehicleDetails.make, driverVehicleDetails.brand);
+  const model = firstDefined(vehicle.model, driverVehicleDetails.model);
+  const year = firstDefined(vehicle.year, driverVehicleDetails.year);
 
   return {
     id: vehicle.id,
     brand: make || 'Not added',
     model: [model, year ? `(${year})` : ''].filter(Boolean).join(' ') || 'Not added',
-    plateNumber: firstValue(vehicle.plate_number, details.plate_number, driverProfile.license_number, 'Not added'),
+    plateNumber: firstDefined(
+      vehicle.plate_number,
+      driverVehicleDetails.plate_number,
+      'Not added'
+    ),
   };
 }
 
-export async function getProfileBundle(fallbackProfile) {
-  const [me, userProfile, driverProfile, vehicles] = await Promise.allSettled([
+/**
+ * Authenticates the user with email + password.
+ * Stores the returned token in localStorage so all subsequent requests are authenticated.
+ * Throws with the server's error message on bad credentials.
+ */
+export async function login(email, password) {
+  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload?.detail || payload?.message || 'Invalid email or password');
+  }
+
+  return payload;
+}
+
+export function logout() {
+  localStorage.removeItem('swiftze_access_token');
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('token');
+  localStorage.removeItem('authToken');
+}
+
+/**
+ * Fetches all profile data from the API.
+ * Throws if any required endpoint fails.
+ * Returns a clean profile object built entirely from API data.
+ */
+export async function getProfileBundle() {
+  const [meRes, userProfileRes, driverProfileRes, vehiclesRes] = await Promise.all([
     request('/auth/me'),
     request('/profile/getuserprofile'),
     request('/drivers/profile/me'),
     request('/vehicles/my?page=1&page_size=20&is_active=true'),
   ]);
 
-  const meData = me.status === 'fulfilled' ? me.value : {};
-  const profileData = userProfile.status === 'fulfilled' ? userProfile.value : {};
-  const driverData = driverProfile.status === 'fulfilled' ? driverProfile.value : {};
-  const vehicleList = vehicles.status === 'fulfilled'
-    ? (Array.isArray(vehicles.value) ? vehicles.value : vehicles.value?.data || [])
-    : [];
-  const primaryVehicle = vehicleList.find((vehicle) => vehicle.is_primary) || vehicleList[0] || {};
+  const meData = meRes || {};
+  const profileData = userProfileRes || {};
+  const driverData = driverProfileRes || {};
+  const vehicleList = Array.isArray(vehiclesRes)
+    ? vehiclesRes
+    : vehiclesRes?.data || [];
+  const primaryVehicle =
+    vehicleList.find((v) => v.is_primary) || vehicleList[0] || {};
 
-  const fullName = firstValue(profileData.full_name, meData.full_name, meData.name, fallbackProfile.name);
-  const email = firstValue(meData.email, profileData.email, fallbackProfile.email);
-  const phone = firstValue(meData.phone, profileData.phone, fallbackProfile.phone);
+  const fullName = firstDefined(profileData.full_name, meData.full_name, meData.name);
+  const email = firstDefined(meData.email, profileData.email);
+  const phone = firstDefined(meData.phone, profileData.phone);
   const { countryCode, phoneNumber } = splitPhone(phone);
 
   return {
-    ...fallbackProfile,
     apiIds: {
-      user: firstValue(meData.id, profileData.user_id),
+      user: firstDefined(meData.id, profileData.user_id),
       profile: profileData.id,
       driver: driverData.id,
       vehicle: primaryVehicle.id,
     },
-    name: fullName,
+    name: fullName || '',
     initials: initialsFromName(fullName),
-    id: firstValue(meData.id, profileData.id, driverData.id, fallbackProfile.id),
-    email,
-    emailDisplay: email,
-    phone,
-    countryCode: countryCode || fallbackProfile.countryCode,
-    phoneNumber: phoneNumber || fallbackProfile.phoneNumber,
-    nationality: firstValue(profileData.nationality, profileData.country, fallbackProfile.nationality),
-    country: firstValue(profileData.location, driverData.current_location?.country, fallbackProfile.country),
-    city: firstValue(driverData.current_location?.city, profileData.city, fallbackProfile.city),
-    rating: Number(firstValue(driverData.average_rating, driverData.rating, fallbackProfile.rating)),
-    totalReviews: Number(firstValue(driverData.total_reviews, driverData.review_count, fallbackProfile.totalReviews)),
-    vehicle: normalizeVehicle(primaryVehicle, driverData),
+    id: firstDefined(meData.id, profileData.id, driverData.id),
+    email: email || '',
+    emailDisplay: email || '',
+    phone: phone || '',
+    countryCode: countryCode || '',
+    phoneNumber: phoneNumber || '',
+    nationality: firstDefined(profileData.nationality, profileData.country) || '',
+    country: firstDefined(profileData.location, driverData.current_location?.country) || '',
+    city: firstDefined(driverData.current_location?.city, profileData.city) || '',
+    rating: Number(firstDefined(driverData.average_rating, driverData.rating) || 0),
+    totalReviews: Number(firstDefined(driverData.total_reviews, driverData.review_count) || 0),
+    vehicle: normalizeVehicle(primaryVehicle, driverData.vehicle_details || {}),
   };
 }
 
@@ -169,7 +204,6 @@ export async function updateEmailPreferences(preferences) {
 export async function uploadProfileImage(file) {
   const formData = new FormData();
   formData.append('file', file);
-
   return request('/uploads/upload-profile-image', {
     method: 'POST',
     body: formData,
@@ -178,26 +212,28 @@ export async function uploadProfileImage(file) {
 
 export async function uploadVehicleImage(vehicleId, file) {
   if (!vehicleId) throw new Error('Vehicle id is missing');
-
   const formData = new FormData();
   formData.append('file', file);
-
   return request(`/uploads/vehicles/${vehicleId}/upload-image`, {
     method: 'POST',
     body: formData,
   });
 }
 
+/**
+ * Fetches ratings and stats for a given entity from the API.
+ * Throws if either endpoint fails.
+ */
 export async function getEntityRatings(entityType, entityId) {
   if (!entityId) throw new Error('Entity id is missing');
 
-  const [ratings, stats] = await Promise.allSettled([
+  const [ratingsRes, statsRes] = await Promise.all([
     request(`/interactions/ratings/${entityType}/${entityId}?limit=20&offset=0`, { auth: false }),
     request(`/interactions/ratings/${entityType}/${entityId}/stats`, { auth: false }),
   ]);
 
   return {
-    ratings: ratings.status === 'fulfilled' ? ratings.value : [],
-    stats: stats.status === 'fulfilled' ? stats.value : null,
+    ratings: Array.isArray(ratingsRes) ? ratingsRes : [],
+    stats: statsRes || null,
   };
 }

@@ -1,25 +1,89 @@
 // src/App.jsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Sidebar from './components/layout/Sidebar';
 import ProfilePage from './pages/ProfilePage';
 import SettingsPage from './pages/SettingsPage';
+import LoginPage from './pages/LoginPage';
+import { getProfileBundle, logout } from './api/swiftzeApi';
 import './index.css';
 
 export default function App() {
-  const [activeNav, setActiveNav] = useState('settings');
+  // Auth state — check localStorage on mount for an existing session
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  const [activeNav, setActiveNav] = useState('profile');
   const [filledImages, setFilledImages] = useState(false);
+
+  // Header user info — loaded from API after login
+  const [headerUser, setHeaderUser] = useState({ name: '', initials: '', id: '' });
+
+  // On mount: check if a token already exists (page refresh persistence)
+  useEffect(() => {
+    const token = localStorage.getItem('swiftze_access_token');
+    if (token) {
+      setIsAuthenticated(true);
+    }
+    setAuthChecked(true);
+  }, []);
+
+  // Load header user info whenever auth state becomes true
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    getProfileBundle()
+      .then((profile) => {
+        setHeaderUser({
+          name: profile.name || '',
+          initials: profile.initials || '',
+          id: profile.id || '',
+        });
+      })
+      .catch(() => {
+        // Header fields stay empty if API fails
+      });
+  }, [isAuthenticated]);
+
+  const handleLoginSuccess = (user) => {
+    setHeaderUser({
+      name: user.full_name || '',
+      initials: (user.full_name || '')
+        .split(' ')
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p[0]?.toUpperCase())
+        .join('') || 'U',
+      id: user.id || '',
+    });
+    setIsAuthenticated(true);
+    setActiveNav('profile');
+  };
+
+  const handleLogout = () => {
+    logout();
+    setIsAuthenticated(false);
+    setHeaderUser({ name: '', initials: '', id: '' });
+  };
+
+  // Avoid flash of login page on refresh when a token exists
+  if (!authChecked) return null;
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  }
 
   const isSettings = activeNav === 'settings';
 
   return (
     <div className="flex min-h-screen bg-white">
-      {/* Sidebar — fixed 220px */}
-      <Sidebar activeNav={activeNav} onNavChange={setActiveNav} />
+      {/* Sidebar — fixed 267px */}
+      <Sidebar activeNav={activeNav} onNavChange={setActiveNav} onLogout={handleLogout} />
 
       {/* Main column */}
       <div className="flex-1 flex flex-col" style={{ marginLeft: '267px' }}>
 
-        {/* Top header — white, full width of content area */}
+        {/* Top header */}
         <div className="h-[156px] bg-white px-[50px] flex items-center justify-between">
           <span className="text-[32px] font-bold text-[#2F2F32]">
             {isSettings ? 'Settings' : 'Profile'}
@@ -51,17 +115,19 @@ export default function App() {
               )}
             </button>
 
-            {/* Avatar */}
+            {/* Avatar — from API */}
             <div className="flex items-center gap-3">
-              <div className={`w-[58px] h-[58px] rounded-full flex items-center justify-center flex-shrink-0 ${isSettings ? 'bg-[#A6A6A6]' : 'bg-[#9CA3AF]'}`}>
-                <span className="text-[#2F2F32] text-[26px] font-bold">{isSettings ? 'UM' : 'CO'}</span>
+              <div className="w-[58px] h-[58px] rounded-full bg-[#9CA3AF] flex items-center justify-center flex-shrink-0">
+                <span className="text-[#2F2F32] text-[22px] font-bold">
+                  {headerUser.initials || '…'}
+                </span>
               </div>
               <div className="flex flex-col leading-tight">
                 <span className="text-[14px] font-bold text-[#9CA3AF]">
-                  {isSettings ? 'UKosco Media' : 'Catherine Ojong'}
+                  {headerUser.name || '…'}
                 </span>
                 <span className="text-[14px] text-[#C5C5CA] mt-1">
-                  ID: {isSettings ? '2345678' : '1234567'}
+                  {headerUser.id ? `ID: ${headerUser.id}` : ''}
                 </span>
               </div>
             </div>

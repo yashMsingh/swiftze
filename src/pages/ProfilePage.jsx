@@ -9,7 +9,6 @@ import VehicleInfoModal from '../components/modals/VehicleInfoModal';
 import AvatarEditOverlay from '../components/modals/AvatarEditOverlay';
 import ReviewsStatsRow from '../components/reviews/ReviewsStatsRow';
 import ReviewCard from '../components/reviews/ReviewCard';
-import { profile as mockProfile, reviewStats as mockReviewStats, reviews as mockReviews } from '../data/mockProfile';
 import { getEntityRatings, getProfileBundle, updateUserProfile, uploadVehicleImage } from '../api/swiftzeApi';
 
 function formatReviewDate(value) {
@@ -20,8 +19,6 @@ function formatReviewDate(value) {
 }
 
 function mapApiReviews(apiReviews) {
-  if (!Array.isArray(apiReviews) || apiReviews.length === 0) return mockReviews;
-
   return apiReviews.map((review) => ({
     reviewer: review.user_name || 'Swiftze User',
     initials: (review.user_name || 'SU')
@@ -36,31 +33,39 @@ function mapApiReviews(apiReviews) {
   }));
 }
 
-function mapApiReviewStats(stats, apiReviews) {
-  if (!stats && (!Array.isArray(apiReviews) || apiReviews.length === 0)) return mockReviewStats;
+function mapApiReviewStats(stats, totalFromReviews) {
+  const total = stats?.total_reviews ?? stats?.count ?? totalFromReviews;
+  const average = stats?.average_rating ?? stats?.average ?? 0;
+  const counts = stats?.rating_breakdown ?? stats?.breakdown ?? {};
+  const maxCount = Math.max(...Object.values(counts).map(Number), 1);
 
-  const totalReviews = stats?.total_reviews || stats?.count || apiReviews.length;
-  const averageRating = stats?.average_rating || stats?.average || mockReviewStats.averageRating;
-  const counts = stats?.breakdown || stats?.rating_breakdown || {};
-  const maxCount = Math.max(...Object.values(counts).map(Number), totalReviews, 1);
-
-  return {
-    totalReviews,
-    averageRating,
-    breakdown: mockReviewStats.breakdown.map((item) => {
-      const count = Number(counts[item.stars] || counts[`${item.stars}`] || 0);
-      return {
-        ...item,
-        percentage: count ? Math.round((count / maxCount) * 100) : item.percentage,
-      };
-    }),
+  const STAR_COLORS = {
+    5: '#22C55E',
+    4: '#3B82F6',
+    3: '#FBBF24',
+    2: '#8B5CF6',
+    1: '#EF4444',
   };
+
+  const breakdown = [5, 4, 3, 2, 1].map((stars) => {
+    const count = Number(counts[stars] ?? counts[String(stars)] ?? 0);
+    return {
+      stars,
+      color: STAR_COLORS[stars],
+      percentage: count ? Math.round((count / maxCount) * 100) : 0,
+    };
+  });
+
+  return { totalReviews: total, averageRating: average, breakdown };
 }
 
 export default function ProfilePage({ filledImages = false }) {
-  const [profile, setProfile] = useState(mockProfile);
-  const [reviewStats, setReviewStats] = useState(mockReviewStats);
-  const [reviews, setReviews] = useState(mockReviews);
+  const [profile, setProfile] = useState(null);
+  const [reviewStats, setReviewStats] = useState(null);
+  const [reviews, setReviews] = useState(null);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   // View: 'profile' or 'reviews'
   const [view, setView] = useState('profile');
@@ -70,7 +75,7 @@ export default function ProfilePage({ filledImages = false }) {
 
   // Availability toggle states
   const [available, setAvailable] = useState(true);
-  const [booked, setBooked]       = useState(false);
+  const [booked, setBooked] = useState(false);
 
   const openModal  = (name) => setActiveModal(name);
   const closeModal = ()     => setActiveModal(null);
@@ -80,27 +85,29 @@ export default function ProfilePage({ filledImages = false }) {
 
     async function loadProfile() {
       try {
-        const nextProfile = await getProfileBundle(mockProfile);
-        if (cancelled) return;
+        setLoading(true);
+        setError(null);
 
+        const nextProfile = await getProfileBundle();
+        if (cancelled) return;
         setProfile(nextProfile);
 
-        const driverId = nextProfile.apiIds?.driver || nextProfile.id;
+        const driverId = nextProfile.apiIds?.driver;
         const ratingResult = await getEntityRatings('driver', driverId);
         if (cancelled) return;
 
-        setReviews(mapApiReviews(ratingResult.ratings));
-        setReviewStats(mapApiReviewStats(ratingResult.stats, ratingResult.ratings));
-      } catch (error) {
-        console.info('Using local profile fallback:', error.message);
+        const mappedReviews = mapApiReviews(ratingResult.ratings);
+        setReviews(mappedReviews);
+        setReviewStats(mapApiReviewStats(ratingResult.stats, ratingResult.ratings.length));
+      } catch (err) {
+        if (!cancelled) setError(err.message || 'Failed to load profile');
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
 
     loadProfile();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   const handlePersonalInfoSave = async (data) => {
@@ -113,34 +120,53 @@ export default function ProfilePage({ filledImages = false }) {
       nationality: data.nationality,
       country: data.location || profile.country,
     };
-
     setProfile(nextProfile);
 
-    try {
-      await updateUserProfile({
-        email: data.email,
-        countryCode: profile.countryCode,
-        phone: data.phone,
-        nationality: data.nationality,
-        location: data.location,
-      });
-    } catch (error) {
-      console.info('Profile update kept locally:', error.message);
-    }
+    await updateUserProfile({
+      email: data.email,
+      countryCode: profile.countryCode,
+      phone: data.phone,
+      nationality: data.nationality,
+      location: data.location,
+    });
   };
 
   const handleVehicleImagesUpload = async (vehicleId, files) => {
-    try {
-      await Promise.all(files.map((file) => uploadVehicleImage(vehicleId, file)));
-    } catch (error) {
-      console.info('Vehicle image upload skipped:', error.message);
-    }
+    await Promise.all(files.map((file) => uploadVehicleImage(vehicleId, file)));
   };
 
   const handleReviewsClick = () => {
     setView('reviews');
     setActiveModal(null);
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-[#2F2F32] border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm text-[#6B7280]">Loading profile…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <span className="text-[#EF4444] font-semibold">Failed to load profile</span>
+          <span className="text-sm text-[#6B7280]">{error}</span>
+          <button
+            className="mt-2 px-4 py-2 bg-[#2F2F32] text-white text-sm rounded-lg"
+            onClick={() => window.location.reload()}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col">
@@ -171,9 +197,9 @@ export default function ProfilePage({ filledImages = false }) {
       ) : (
         /* Reviews view */
         <div>
-          <ReviewsStatsRow stats={reviewStats} />
+          {reviewStats && <ReviewsStatsRow stats={reviewStats} />}
           <div className="flex flex-col gap-4">
-            {reviews.map((review, i) => (
+            {(reviews || []).map((review, i) => (
               <ReviewCard key={i} review={review} />
             ))}
           </div>
@@ -203,7 +229,7 @@ export default function ProfilePage({ filledImages = false }) {
         <VehicleInfoModal
           vehicleId={profile.apiIds?.vehicle}
           onClose={closeModal}
-          onSave={() => console.log('Vehicle info saved')}
+          onSave={() => {}}
           onUploadVehicleImages={handleVehicleImagesUpload}
         />
       )}

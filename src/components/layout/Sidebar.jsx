@@ -27,7 +27,7 @@ const navItems = [
   { id: 'settings',  label: 'Settings',         Icon: Settings },
 ];
 
-export default function Sidebar({ activeNav = 'settings', onNavChange }) {
+export default function Sidebar({ activeNav = 'settings', onNavChange, onLogout }) {
   return (
     <aside
       className="fixed left-0 top-0 h-full bg-white flex flex-col z-10"
@@ -74,7 +74,10 @@ export default function Sidebar({ activeNav = 'settings', onNavChange }) {
 
       {/* Log out */}
       <div className="px-[30px] pb-[130px] flex-shrink-0">
-        <button className="w-full flex items-center gap-[15px] text-[#4A4A4D] hover:text-[#111827] transition-colors duration-150 focus:outline-none">
+        <button
+          onClick={onLogout}
+          className="w-full flex items-center gap-[15px] text-[#4A4A4D] hover:text-[#EF4444] transition-colors duration-150 focus:outline-none"
+        >
           <LogOut size={21} strokeWidth={1.8} className="flex-shrink-0" />
           <span className="text-[19px] font-medium">Log Out</span>
         </button>
@@ -82,3 +85,4 @@ export default function Sidebar({ activeNav = 'settings', onNavChange }) {
     </aside>
   );
 }
+

@@ -14,8 +14,8 @@ export default function PasswordConfirmModal({
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!password) return;
-    // Simulate wrong password check
-    if (password === 'wrong') {
+    // Simulate real password check (using the demo password)
+    if (password !== 'swiftze123') {
       setError(true);
       return;
     }

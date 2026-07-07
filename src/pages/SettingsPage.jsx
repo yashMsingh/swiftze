@@ -15,94 +15,61 @@ import DeactivateConfirmModal from '../components/modals/DeactivateConfirmModal'
 import DeleteConfirmModal from '../components/modals/DeleteConfirmModal';
 import LegalContentModal from '../components/modals/LegalContentModal';
 
-import { userProfile, defaultNotifications } from '../data/mockSettings';
-import { getEmailPreferences, updateEmailPreferences } from '../api/swiftzeApi';
+import { getEmailPreferences, updateEmailPreferences, getProfileBundle, logout } from '../api/swiftzeApi';
 
+// Maps frontend toggle keys → backend preference field names
 const notificationPreferenceMap = {
   orderRequests: 'new_orders',
   earningAlerts: 'payment_notifications',
   emailUpdates: 'order_updates',
 };
 
-function mapPreferencesToNotifications(preferences) {
-  if (!preferences || typeof preferences !== 'object') return defaultNotifications;
+const DEFAULT_NOTIFICATIONS = {
+  push: false,
+  orderRequests: false,
+  earningAlerts: false,
+  emailUpdates: false,
+};
 
+function mapPreferencesToNotifications(preferences) {
   return {
-    push: defaultNotifications.push,
-    orderRequests: preferences.new_orders ?? defaultNotifications.orderRequests,
-    earningAlerts: preferences.payment_notifications ?? defaultNotifications.earningAlerts,
-    emailUpdates: preferences.order_updates ?? defaultNotifications.emailUpdates,
+    push: DEFAULT_NOTIFICATIONS.push,
+    orderRequests: preferences.new_orders ?? false,
+    earningAlerts: preferences.payment_notifications ?? false,
+    emailUpdates: preferences.order_updates ?? false,
   };
 }
 
 export default function SettingsPage() {
-  // Accordion state
+  // Accordion state — all open by default
   const [expandedSections, setExpandedSections] = useState({
     notifications: true,
     security: true,
     legal: true,
-    account: true
+    account: true,
   });
 
   const toggleSection = (section) => {
-    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+    setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // Toggles state
-  const [notifications, setNotifications] = useState(defaultNotifications);
+  // Notification toggles — loaded from API
+  const [notifications, setNotifications] = useState(DEFAULT_NOTIFICATIONS);
   const [emailPreferences, setEmailPreferences] = useState(null);
+  const [notifLoading, setNotifLoading] = useState(true);
+  const [notifError, setNotifError] = useState(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadEmailPreferences() {
-      try {
-        const preferences = await getEmailPreferences();
-        if (cancelled) return;
-
-        setEmailPreferences(preferences);
-        setNotifications(mapPreferencesToNotifications(preferences));
-      } catch (error) {
-        console.info('Using local notification fallback:', error.message);
-      }
-    }
-
-    loadEmailPreferences();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  
-  const handleToggle = (key) => {
-    setNotifications(prev => {
-      const next = { ...prev, [key]: !prev[key] };
-      const preferenceKey = notificationPreferenceMap[key];
-
-      if (preferenceKey) {
-        const nextPreferences = {
-          ...(emailPreferences || {}),
-          [preferenceKey]: next[key],
-        };
-
-        setEmailPreferences(nextPreferences);
-        updateEmailPreferences(nextPreferences).catch((error) => {
-          console.info('Notification preference kept locally:', error.message);
-        });
-      }
-
-      return next;
-    });
-  };
+  // User profile data loaded from API (for recovery email/phone)
+  const [userProfile, setUserProfile] = useState({ email: '', phone: '' });
 
   // Lock App state
   const [lockTime, setLockTime] = useState('10 Minutes');
 
-  // Modal Flow state
+  // Modal flow state
   // null | 'recoveryEmail' | 'recoveryNumber' | 'deactivate' | 'delete' | 'terms' | 'tax'
   const [activeFlow, setActiveFlow] = useState(null);
   const [flowStep, setFlowStep] = useState(1);
-  const [tempValue, setTempValue] = useState(''); // Store email/number during flow
+  const [tempValue, setTempValue] = useState('');
 
   const closeFlow = () => {
     setActiveFlow(null);
@@ -115,67 +82,142 @@ export default function SettingsPage() {
     setFlowStep(1);
   };
 
+  // Load email preferences from API
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreferences() {
+      try {
+        setNotifLoading(true);
+        setNotifError(null);
+        const preferences = await getEmailPreferences();
+        if (cancelled) return;
+        setEmailPreferences(preferences);
+        setNotifications(mapPreferencesToNotifications(preferences));
+      } catch (err) {
+        if (!cancelled) setNotifError(err.message || 'Failed to load preferences');
+      } finally {
+        if (!cancelled) setNotifLoading(false);
+      }
+    }
+
+    loadPreferences();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Load user profile from API for recovery email/phone display
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUserProfile() {
+      try {
+        const profile = await getProfileBundle();
+        if (cancelled) return;
+        setUserProfile({
+          email: profile.email || '',
+          phone: profile.phone || '',
+        });
+      } catch {
+        // Non-critical — fields will just be empty
+      }
+    }
+
+    loadUserProfile();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleToggle = (key) => {
+    setNotifications((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      const preferenceKey = notificationPreferenceMap[key];
+
+      if (preferenceKey) {
+        const nextPreferences = {
+          ...(emailPreferences || {}),
+          [preferenceKey]: next[key],
+        };
+        setEmailPreferences(nextPreferences);
+        updateEmailPreferences(nextPreferences).catch((err) => {
+          console.error('Failed to update notification preference:', err.message);
+        });
+      }
+
+      return next;
+    });
+  };
+
   return (
     <div className="flex flex-col gap-[18px] w-full">
       {/* SECTION 1 — Notifications */}
-      <AccordionSection 
-        title="Notifications" 
-        expanded={expandedSections.notifications} 
+      <AccordionSection
+        title="Notifications"
+        expanded={expandedSections.notifications}
         onToggle={() => toggleSection('notifications')}
       >
-        <ToggleRow 
-          label="Push notifications" 
-          description="Receive notifications on your device"
-          checked={notifications.push}
-          onChange={() => handleToggle('push')}
-        />
-        <ToggleRow 
-          label="Order Requests Alert" 
-          description="Get notified when you receive order requests"
-          checked={notifications.orderRequests}
-          onChange={() => handleToggle('orderRequests')}
-        />
-        <ToggleRow 
-          label="Earning Alerts" 
-          description="Get notified for every payment you receive"
-          checked={notifications.earningAlerts}
-          onChange={() => handleToggle('earningAlerts')}
-        />
-        <ToggleRow 
-          label="Receive Email Updates" 
-          description="Stay informed with swiftze logistics updates"
-          checked={notifications.emailUpdates}
-          onChange={() => handleToggle('emailUpdates')}
-        />
+        {notifLoading ? (
+          <div className="flex items-center gap-2 py-4 px-4">
+            <div className="w-4 h-4 border-2 border-[#2F2F32] border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-[#6B7280]">Loading preferences…</span>
+          </div>
+        ) : notifError ? (
+          <div className="py-4 px-4 text-sm text-[#EF4444]">{notifError}</div>
+        ) : (
+          <>
+            <ToggleRow
+              label="Push notifications"
+              description="Receive notifications on your device"
+              checked={notifications.push}
+              onChange={() => handleToggle('push')}
+            />
+            <ToggleRow
+              label="Order Requests Alert"
+              description="Get notified when you receive order requests"
+              checked={notifications.orderRequests}
+              onChange={() => handleToggle('orderRequests')}
+            />
+            <ToggleRow
+              label="Earning Alerts"
+              description="Get notified for every payment you receive"
+              checked={notifications.earningAlerts}
+              onChange={() => handleToggle('earningAlerts')}
+            />
+            <ToggleRow
+              label="Receive Email Updates"
+              description="Stay informed with swiftze logistics updates"
+              checked={notifications.emailUpdates}
+              onChange={() => handleToggle('emailUpdates')}
+            />
+          </>
+        )}
       </AccordionSection>
 
       {/* SECTION 2 — Security */}
-      <AccordionSection 
-        title="Security" 
-        expanded={expandedSections.security} 
+      <AccordionSection
+        title="Security"
+        expanded={expandedSections.security}
         onToggle={() => toggleSection('security')}
       >
         <StaticStatusRow label="Enable Two Factor Authentication" />
-        <RecoveryRow 
-          label="Add Recovery Email" 
+        <RecoveryRow
+          label="Add Recovery Email"
           onChangeClick={() => startFlow('recoveryEmail')}
         />
-        <RecoveryRow 
-          label="Add Recovery Phone Number" 
+        <RecoveryRow
+          label="Add Recovery Phone Number"
           onChangeClick={() => startFlow('recoveryNumber')}
         />
         <StaticStatusRow label="Enable Fingerprint Unluck" />
-        <LockDropdownRow 
-          label="Lock App If Inactive for" 
+        <LockDropdownRow
+          label="Lock App If Inactive for"
           value={lockTime}
           onChange={setLockTime}
         />
       </AccordionSection>
 
       {/* SECTION 3 — Legal & Compliance */}
-      <AccordionSection 
-        title="Legal & Compliance" 
-        expanded={expandedSections.legal} 
+      <AccordionSection
+        title="Legal & Compliance"
+        expanded={expandedSections.legal}
         onToggle={() => toggleSection('legal')}
       >
         <SimpleRow label="Terms of Service" onClick={() => startFlow('terms')} />
@@ -183,9 +225,9 @@ export default function SettingsPage() {
       </AccordionSection>
 
       {/* SECTION 4 — Account Control */}
-      <AccordionSection 
-        title="Account Control" 
-        expanded={expandedSections.account} 
+      <AccordionSection
+        title="Account Control"
+        expanded={expandedSections.account}
         onToggle={() => toggleSection('account')}
       >
         <SimpleRow label="Deactivate Account" onClick={() => startFlow('deactivate')} />
@@ -198,35 +240,32 @@ export default function SettingsPage() {
       {activeFlow === 'recoveryEmail' && (
         <>
           {flowStep === 1 && (
-            <PasswordConfirmModal 
+            <PasswordConfirmModal
               title="Change Recovery Email"
               onContinue={() => setFlowStep(2)}
               onBack={closeFlow}
             />
           )}
           {flowStep === 2 && (
-            <NewValueModal 
+            <NewValueModal
               title="Change Recovery Email"
               subtitle="Add your recovery email"
-              initialValue={userProfile.recoveryEmail}
+              initialValue={userProfile.email}
               inputType="email"
-              onContinue={(val) => {
-                setTempValue(val);
-                setFlowStep(3);
-              }}
-              onBack={() => setFlowStep(1)} // Or close, depending on preference
+              onContinue={(val) => { setTempValue(val); setFlowStep(3); }}
+              onBack={() => setFlowStep(1)}
             />
           )}
           {flowStep === 3 && (
-            <OtpVerificationModal 
-              targetEmailOrPhone={tempValue || userProfile.recoveryEmail}
+            <OtpVerificationModal
+              targetEmailOrPhone={tempValue || userProfile.email}
               onContinue={() => setFlowStep(4)}
               onChangeTarget={() => setFlowStep(2)}
               onBack={closeFlow}
             />
           )}
           {flowStep === 4 && (
-            <SuccessModal 
+            <SuccessModal
               message="Recovery Email Changed!"
               onClose={closeFlow}
             />
@@ -234,39 +273,36 @@ export default function SettingsPage() {
         </>
       )}
 
-      {/* Flow B: Recovery Number */}
+      {/* Flow B: Recovery Phone Number */}
       {activeFlow === 'recoveryNumber' && (
         <>
           {flowStep === 1 && (
-            <PasswordConfirmModal 
+            <PasswordConfirmModal
               title="Change Recovery Number"
               onContinue={() => setFlowStep(2)}
               onBack={closeFlow}
             />
           )}
           {flowStep === 2 && (
-            <NewValueModal 
+            <NewValueModal
               title="Change Recovery Number"
               subtitle="Add your recovery number"
-              initialValue={userProfile.recoveryPhone}
+              initialValue={userProfile.phone}
               inputType="tel"
-              onContinue={(val) => {
-                setTempValue(val);
-                setFlowStep(3);
-              }}
+              onContinue={(val) => { setTempValue(val); setFlowStep(3); }}
               onBack={() => setFlowStep(1)}
             />
           )}
           {flowStep === 3 && (
-            <OtpVerificationModal 
-              targetEmailOrPhone={tempValue || userProfile.recoveryPhone}
+            <OtpVerificationModal
+              targetEmailOrPhone={tempValue || userProfile.phone}
               onContinue={() => setFlowStep(4)}
               onChangeTarget={() => setFlowStep(2)}
               onBack={closeFlow}
             />
           )}
           {flowStep === 4 && (
-            <SuccessModal 
+            <SuccessModal
               message="Recovery Number Changed!"
               onClose={closeFlow}
             />
@@ -278,19 +314,25 @@ export default function SettingsPage() {
       {activeFlow === 'deactivate' && (
         <>
           {flowStep === 1 && (
-            <PasswordConfirmModal 
+            <PasswordConfirmModal
               title="Deactivate Account"
               onContinue={() => setFlowStep(2)}
               onBack={closeFlow}
             />
           )}
           {flowStep === 2 && (
-            <DeactivateConfirmModal 
-              onContinue={() => {
-                console.log("Account deactivated");
-                closeFlow();
-              }}
+            <DeactivateConfirmModal
+              onContinue={() => setFlowStep(3)}
               onBack={() => setFlowStep(1)}
+            />
+          )}
+          {flowStep === 3 && (
+            <SuccessModal
+              message="Account Deactivated Successfully!"
+              onClose={() => {
+                logout();
+                window.location.reload();
+              }}
             />
           )}
         </>
@@ -300,19 +342,25 @@ export default function SettingsPage() {
       {activeFlow === 'delete' && (
         <>
           {flowStep === 1 && (
-            <PasswordConfirmModal 
+            <PasswordConfirmModal
               title="Delete Account"
               onContinue={() => setFlowStep(2)}
               onBack={closeFlow}
             />
           )}
           {flowStep === 2 && (
-            <DeleteConfirmModal 
-              onContinue={() => {
-                console.log("Account deleted");
-                closeFlow();
-              }}
+            <DeleteConfirmModal
+              onContinue={() => setFlowStep(3)}
               onBack={() => setFlowStep(1)}
+            />
+          )}
+          {flowStep === 3 && (
+            <SuccessModal
+              message="Account Deleted Successfully!"
+              onClose={() => {
+                logout();
+                window.location.reload();
+              }}
             />
           )}
         </>
@@ -320,18 +368,11 @@ export default function SettingsPage() {
 
       {/* Legal Content Modals */}
       {activeFlow === 'terms' && (
-        <LegalContentModal 
-          title="Terms Of Service"
-          onClose={closeFlow}
-        />
+        <LegalContentModal title="Terms Of Service" onClose={closeFlow} />
       )}
       {activeFlow === 'tax' && (
-        <LegalContentModal 
-          title="Tax Information"
-          onClose={closeFlow}
-        />
+        <LegalContentModal title="Tax Information" onClose={closeFlow} />
       )}
-
     </div>
   );
 }

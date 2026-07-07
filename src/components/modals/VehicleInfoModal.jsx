@@ -34,11 +34,15 @@ function UploadZone({ onFilesSelected, uploading }) {
   );
 }
 
-function ThumbnailRow({ count }) {
+function ThumbnailRow({ count, images = [] }) {
   return (
     <div className="grid gap-[14px]" style={{ gridTemplateColumns: `repeat(${count}, 1fr)` }}>
       {Array(count).fill(null).map((_, i) => (
-        <div key={i} className="h-[100px] bg-[#F4F4F5] rounded-[8px]" />
+        <div key={i} className="h-[100px] bg-[#F4F4F5] rounded-[8px] overflow-hidden relative border border-[#E5E7EB]">
+          {images[i] ? (
+            <img src={images[i].preview} className="w-full h-full object-cover" alt="" />
+          ) : null}
+        </div>
       ))}
     </div>
   );
@@ -46,6 +50,10 @@ function ThumbnailRow({ count }) {
 
 export default function VehicleInfoModal({ vehicleId, onClose, onSave, onUploadVehicleImages }) {
   const [uploading, setUploading] = useState(false);
+  
+  // Track images locally for preview
+  const [vehicleImages, setVehicleImages] = useState([]);
+  const [licenseImages, setLicenseImages] = useState([]);
 
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
@@ -53,15 +61,33 @@ export default function VehicleInfoModal({ vehicleId, onClose, onSave, onUploadV
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const handleFilesSelected = async (files) => {
+  // Clean up object URLs when unmounting
+  useEffect(() => {
+    return () => {
+      [...vehicleImages, ...licenseImages].forEach(img => {
+        if (img.preview) URL.revokeObjectURL(img.preview);
+      });
+    };
+  }, [vehicleImages, licenseImages]);
+
+  const handleVehicleFiles = async (files) => {
     if (!onUploadVehicleImages) return;
+    const newImgs = files.map(file => ({ preview: URL.createObjectURL(file) }));
+    setVehicleImages(prev => [...prev, ...newImgs].slice(0, 4));
 
     setUploading(true);
-    try {
-      await onUploadVehicleImages(vehicleId, files);
-    } finally {
-      setUploading(false);
-    }
+    try { await onUploadVehicleImages(vehicleId, files); }
+    finally { setUploading(false); }
+  };
+
+  const handleLicenseFiles = async (files) => {
+    if (!onUploadVehicleImages) return;
+    const newImgs = files.map(file => ({ preview: URL.createObjectURL(file) }));
+    setLicenseImages(prev => [...prev, ...newImgs].slice(0, 2));
+
+    setUploading(true);
+    try { await onUploadVehicleImages(vehicleId, files); }
+    finally { setUploading(false); }
   };
 
   return (
@@ -85,22 +111,22 @@ export default function VehicleInfoModal({ vehicleId, onClose, onSave, onUploadV
         <h2 className="text-[26px] font-bold text-[#111827] leading-tight mb-[18px] pr-20">Vehicle Information</h2>
 
         {/* Car upload zone */}
-        <UploadZone onFilesSelected={handleFilesSelected} uploading={uploading} />
+        <UploadZone onFilesSelected={handleVehicleFiles} uploading={uploading} />
 
         {/* 4 car thumbnails */}
         <div className="mt-[14px] mb-[24px]">
-          <ThumbnailRow count={4} />
+          <ThumbnailRow count={4} images={vehicleImages} />
         </div>
 
         {/* Driving License section */}
         <h3 className="text-[24px] font-bold text-[#111827] leading-tight mb-[14px]">Driving License</h3>
 
         {/* License upload zone */}
-        <UploadZone onFilesSelected={handleFilesSelected} uploading={uploading} />
+        <UploadZone onFilesSelected={handleLicenseFiles} uploading={uploading} />
 
         {/* 2 license thumbnails */}
         <div className="mt-[14px] mb-[24px]">
-          <ThumbnailRow count={2} />
+          <ThumbnailRow count={2} images={licenseImages} />
         </div>
 
         {/* Save button */}
